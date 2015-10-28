@@ -7,7 +7,7 @@ var assert = require('chai').assert;
 
 var EventHubClient = require('./eventhubclient.js');
 
-var goodConnString = "Endpoint=sb://xxx.servicebus.windows.net/;SharedAccessKeyName=yyy;SharedAccessKey=zzz;EntityPath=uuu";
+var goodConnString = 'Endpoint=sb://xxx.servicebus.windows.net/;SharedAccessKeyName=yyy;SharedAccessKey=zzz;EntityPath=uuu';
 
 describe('EventHubClient', function () {
     describe('#StartReceive', function () {

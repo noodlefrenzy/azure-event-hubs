@@ -3,7 +3,7 @@
 
 'use strict';
 
-var EventData = require("./eventdata");
+var EventData = require('./eventdata');
 var Promise = require('bluebird');
 var EventEmitter = require('events').EventEmitter;
 var util = require('util');
@@ -40,9 +40,12 @@ EventHubReceiver.prototype.StartReceive = function(startTime) {
 		console.log('Start time:' + startTime);
 	}
 	
+	var rxName = 'eventhubclient-rx';
+	var rxOptions = { attach: { target: { address: rxName } } };
+	
 	var self = this;
 	return new Promise(function(resolve) {
-		self.amqpClient.createReceiver(self.endpoint).then(function (amqpReceiver) {
+		self.amqpClient.createReceiver(self.endpoint, rxOptions).then(function (amqpReceiver) {
 			amqpReceiver.on('message', function (message) {
 				var eventData = new EventData(message.body, message.annotations.value);
 				self.emit(EventHubReceiver.EventReceived, eventData);

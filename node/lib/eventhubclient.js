@@ -7,7 +7,8 @@ var amqp10 = require('amqp10');
 var Promise = require('bluebird');
 
 var EventHubData = require('./eventdata');
-var EventHubReceiver = require("./eventhubreceiver");
+var EventHubReceiver = require('./eventhubreceiver');
+var ServiceToken = require('azure-iot-common').authorization.ServiceToken;
 
 var managementEndpoint = '$management';
 
@@ -19,28 +20,36 @@ function parseEventHubConnString(connString)
     keyName: '',
     key: ''
   };
-
+  
   var configArray = connString.split(';');
   configArray.forEach(function(element) {
-    var res = element.match("Endpoint=sb://([^/]*)");
+    var res = element.match('Endpoint=sb://([^/]*)');
     if (res !== null) {
         config.host = res[1];
+        res = config.host.split('.');
+        config.namespace = res[0];
     }
-    res = element.match("SharedAccessKeyName=(.*)");
+    res = element.match('SharedAccessKeyName=(.*)');
     if (res !== null) {
         config.keyName = res[1];
     }
-    res = element.match("SharedAccessKey=(.*)");
+    res = element.match('SharedAccessKey=(.*)');
     if (res !== null) {
         config.key = res[1];
     }
-    res = element.match("EntityPath=(.*)");
+    res = element.match('EntityPath=(.*)');
     if (res !== null) {
         config.eventHubName = res[1];
     }
   });
   return config;
 }
+
+function anHourFromNow () {
+  var raw = (Date.now() / 1000) + 3600;
+  return Math.ceil(raw);
+};
+
 
 /**
  * @class EventHubClient
@@ -51,6 +60,8 @@ function parseEventHubConnString(connString)
 function EventHubClient(connString, path) {
   this.config = parseEventHubConnString(connString);
   
+  this.connectPromise = null;
+  
   if (path) {
     this.config.eventHubName = path;
   }
@@ -60,10 +71,14 @@ function EventHubClient(connString, path) {
     throw new Error('No event hub name specified');
   }
 
+  this.config.actualHost = this.config.host;
+  var token = new ServiceToken(this.config.actualHost, this.config.keyName, this.config.key, anHourFromNow());
+  var strToken = token.toString();
+
   this.uri = 'amqps://' +
-    encodeURIComponent(this.config.keyName) + ':' +
-    encodeURIComponent(this.config.key) + '@' +
-    this.config.host;
+    encodeURIComponent(this.config.keyName + '@sas.root.' + this.config.namespace) + ':' +
+    encodeURIComponent(strToken) + '@' +
+    this.config.actualHost;
 
   this.amqpClient = new amqp10.Client(amqp10.Policy.EventHub);
 }
@@ -72,26 +87,8 @@ function EventHubClient(connString, path) {
  * The [Send]{@linkcode EventHubClient#Send} method sends one Event to the Event Hub.
  */
 EventHubClient.prototype.Send = function(event) {
-  /* This code has to be reworked so that it uses the same amqpClient, there is no need to have 2 clients and thus 2 connecitons open */
-  
-  if (typeof(event) !== typeof(EventHubData)) {
-    throw new Error('Expected an EventHubData');
-  }
-  
-  var self = this;
-  var endpoint = '/' + this.config.eventHubName;
-  return new Promise(function(resolve, reject) {
-    self.amqpClient.connect(self.uri).then(function() {
-      self.amqpClient.createSender(endpoint).then(function(sender) {
-        sender.on('errorReceived', function (tx_err) {
-          reject(new Error('error sending request to Event Hub management endpoint: ' + tx_err));
-        });
-        var request = { body: event.Bytes, properties: { messageId: '424242' } };
-        sender.send(request);
-        resolve();
-      });
-    });
-  });
+    /* Not implemented yet */
+    throw new Error('Not implemented (trying to send event:' + JSON.stringify(event) + ')');
 };
 
 /**
@@ -102,36 +99,79 @@ EventHubClient.prototype.SendBatch = function(events) {
     throw new Error('Not implemented (trying to send events:' + JSON.stringify(events) + ')');
 };
 
+EventHubClient.prototype._connect = function() {
+  var self = this;
+  if (!this.connectPromise) {
+    this.connectPromise = new Promise(function(resolve, reject) {
+      self.amqpClient.connect(self.uri).then(function() {
+        var rxName = 'rx-name';
+        var rxOptions = { attach: { target: { address: rxName } } };
+        self.amqpClient.createReceiver(self.config.eventHubName, rxOptions).then(function(receiver) {
+          receiver.on('errorReceived', function (rx_err) {
+            if (rx_err.condition.contents === 'amqp:link:redirect')
+            {
+              console.log(rx_err.errorInfo);
+              self.config.actualHost = rx_err.errorInfo.hostname;
+              self.config.eventHubName = rx_err.errorInfo.address;
+              self.endpointPrefix = '';
+              self.uri = 'amqps://' +
+                encodeURIComponent(self.config.keyName) + ':' +
+                encodeURIComponent(self.config.key) + '@' +
+                self.config.actualHost;
+              self.amqpClient.disconnect().then(function() {
+                self.amqpClient = new amqp10.Client(amqp10.Policy.EventHub);
+                self.amqpClient.connect(self.uri).then(function() {
+                  resolve();
+                });
+              });
+            }
+            else
+            {
+              reject(new Error('error receiving reply from Event Hub management endpoint: ' + rx_err.description));
+            }
+          });
+          receiver.on('attach', function (msg) {
+            console.log("attached");
+            return resolve();
+          });
+        });
+      });
+    });
+  };
+  
+  return this.connectPromise;
+}
+
 /**
  * The [GetPartitionIds]{@linkcode EventHubClient#GetPartitionIds} method gets the partition Ids for an EventHub.
  */
 EventHubClient.prototype.GetPartitionIds = function() {
-  var self = this;
-  return new Promise(function(resolve, reject) {
-    var ehName = self.config.eventHubName;
-    var rxName = 'eventhubclient-rx';
-    var rxOptions = { attach: { target: { address: rxName } } };
-  
-    self.amqpClient.connect(self.uri).then(function() {
-      /* create a sender to send the request to the $management endpoint */
-      self.amqpClient.createSender(managementEndpoint).then(function(sender) {
-        sender.on('errorReceived', function (tx_err) {
-          reject(new Error('error sending request to Event Hub management endpoint: ' + tx_err));
+    var self = this;
+    return new Promise(function (resolve, reject) {
+        var ehName = self.config.eventHubName;
+        var rxName = 'eventhubclient-rx';
+        var rxOptions = { attach: { target: { address: rxName } } };
+
+        self._connect().then(function () {
+            /* create a sender to send the request to the $management endpoint */
+            self.amqpClient.createSender(managementEndpoint).then(function (sender) {
+                sender.on('errorReceived', function (tx_err) {
+                    reject(new Error('error sending request to Event Hub management endpoint: ' + tx_err));
+                });
+                var request = { body: 'stub', properties: { messageId: '424242', replyTo: rxName }, applicationProperties: { operation: 'READ', name: ehName, type: 'com.microsoft:eventhub' } };
+                return sender.send(request);
+            });
+            /* create a receiver for the management endpoint to receive the partition count */
+            self.amqpClient.createReceiver(managementEndpoint, rxOptions).then(function (receiver) {
+                receiver.on('errorReceived', function (rx_err) {
+                    reject(new Error('error receiving reply from Event Hub management endpoint: ' + rx_err));
+                });
+                receiver.on('message', function (msg) {
+                    return resolve(msg.body.partition_ids);
+                });
+            });
         });
-        var request = { body: "stub", properties: { messageId: '424242', replyTo: rxName }, applicationProperties: { operation: "READ", name: ehName, type: "com.microsoft:eventhub" } };
-        return sender.send(request);
-      });
-      /* create a receiver for the management endpoint to receive the partition count */
-      self.amqpClient.createReceiver(managementEndpoint, rxOptions).then(function(receiver) {
-        receiver.on('errorReceived', function (rx_err) {
-          reject(new Error('error receiving reply from Event Hub management endpoint: ' + rx_err));
-        });
-        receiver.on('message', function (msg) {
-          return resolve(msg.body.partition_ids);
-        });
-      });
     });
-  });
 };
 
 /**
@@ -141,7 +181,12 @@ EventHubClient.prototype.GetPartitionIds = function() {
  * @param {String}  partitionId    The partition Id to use for the new receiver.
  */
 EventHubClient.prototype.CreateReceiver = function(consumerGroup, partitionId) {
-	return new EventHubReceiver(this.amqpClient, '/' + this.config.eventHubName + '/ConsumerGroups/' + consumerGroup + '/Partitions/' + partitionId);
-};
+  var self = this;
+  return new Promise(function(resolve) {
+    self._connect().then(function() {
+  	   resolve(new EventHubReceiver(self.amqpClient, self.config.eventHubName + '/ConsumerGroups/' + consumerGroup + '/Partitions/' + partitionId));
+    });
+  });
+}
 
 module.exports = EventHubClient;

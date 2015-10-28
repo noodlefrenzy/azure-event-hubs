@@ -5,7 +5,7 @@
 
 var EventHub = require('../index.js');
 
-var ehClient = new EventHub.Client("Endpoint=sb://xxx.servicebus.windows.net/;SharedAccessKeyName=yyy;SharedAccessKey=zzz;EntityPath=uuu");
-var eventData = new EventHub.EventData(new Buffer("test"));
+var ehClient = new EventHub.Client('Endpoint=sb://xxx.servicebus.windows.net/;SharedAccessKeyName=yyy;SharedAccessKey=zzz;EntityPath=uuu');
+var eventData = new EventHub.EventData(new Buffer('test'));
 ehClient.Send(eventData).then(function() {
 });
