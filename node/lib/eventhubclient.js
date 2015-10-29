@@ -7,7 +7,7 @@ var amqp10 = require('amqp10');
 var Promise = require('bluebird');
 
 var EventHubReceiver = require('./eventhubreceiver');
-var ServiceToken = require('azure-iot-common').authorization.ServiceToken;
+var ServiceToken = require('./authorization').ServiceToken;
 
 var managementEndpoint = '$management';
 
