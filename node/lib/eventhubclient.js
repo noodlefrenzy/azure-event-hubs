@@ -6,7 +6,6 @@
 var amqp10 = require('amqp10');
 var Promise = require('bluebird');
 
-var EventHubData = require('./eventdata');
 var EventHubReceiver = require('./eventhubreceiver');
 var ServiceToken = require('azure-iot-common').authorization.ServiceToken;
 
@@ -48,7 +47,7 @@ function parseEventHubConnString(connString)
 function anHourFromNow () {
   var raw = (Date.now() / 1000) + 3600;
   return Math.ceil(raw);
-};
+}
 
 
 /**
@@ -130,17 +129,17 @@ EventHubClient.prototype._connect = function() {
               reject(new Error('error receiving reply from Event Hub management endpoint: ' + rx_err.description));
             }
           });
-          receiver.on('attach', function (msg) {
+          receiver.on('attach', function () {
             console.log("attached");
             return resolve();
           });
         });
       });
     });
-  };
+  }
   
   return this.connectPromise;
-}
+};
 
 /**
  * The [GetPartitionIds]{@linkcode EventHubClient#GetPartitionIds} method gets the partition Ids for an EventHub.
@@ -187,6 +186,6 @@ EventHubClient.prototype.CreateReceiver = function(consumerGroup, partitionId) {
   	   resolve(new EventHubReceiver(self.amqpClient, self.config.eventHubName + '/ConsumerGroups/' + consumerGroup + '/Partitions/' + partitionId));
     });
   });
-}
+};
 
 module.exports = EventHubClient;

@@ -27,4 +27,4 @@ ehClient.GetPartitionIds().then(function(partitionIds) {
 			});
 		});
 	});
-})
+});
